@@ -67,6 +67,8 @@ type BookingConfig struct {
 	PartySize int64  `json:"party_size"`
 }
 
+var ErrNoMatchingSlots = errors.New("no matching slots")
+
 func ToBookCmd(bookingDetails *BookingDetails, dryRun bool) string {
 	resTypes := make([]string, 0)
 
@@ -92,10 +94,8 @@ func Book(bookingDetails *BookingDetails, dryRun bool, logger zerolog.Logger) er
 
 	matchingSlots := findMatches(bookingDetails, slots)
 	if len(matchingSlots) == 0 {
-		err = errors.New("no matching slots")
-		logger.Error().Err(err).Msg("no matching slots")
-		return err
-
+		logger.Error().Err(ErrNoMatchingSlots).Msg("no matching slots")
+		return ErrNoMatchingSlots
 	}
 
 	logger.Info().Array("matching_slots", matchingSlots).Msg("found matching slots")
@@ -129,8 +129,41 @@ func WaitThenBook(bookingDetails *BookingDetails, dryRun bool, logger zerolog.Lo
 		logger.Warn().Msg("book time has already passed - this can occur when your computer is asleep/turned off during book time")
 	}
 
-	logger.Info().Msgf("waiting %d seconds until booking time: %s", duration/time.Second, bookingDetails.BookingDateTime)
-	time.Sleep(duration + (time.Millisecond * 200))
+	const pollWindow = 10 * time.Second
+	const maxPollInterval = 5 * time.Second
+	const minPollInterval = 1 * time.Second
+
+	if duration > pollWindow {
+		logger.Info().Msgf("waiting %d seconds until booking time: %s", duration/time.Second, bookingDetails.BookingDateTime)
+		time.Sleep(duration - pollWindow)
+	}
+
+	for time.Until(*bookTime) > 0 {
+		logger.Info().Msg("polling for matching slots before booking time")
+		err = Book(bookingDetails, dryRun, logger)
+		if err == nil {
+			return nil
+		}
+		if err != ErrNoMatchingSlots {
+			return err
+		}
+		remaining := time.Until(*bookTime)
+		if remaining <= 0 {
+			break
+		}
+		interval := minPollInterval + (maxPollInterval-minPollInterval)*remaining/pollWindow
+		if interval < minPollInterval {
+			interval = minPollInterval
+		}
+		if interval > maxPollInterval {
+			interval = maxPollInterval
+		}
+		if remaining < interval {
+			time.Sleep(remaining)
+		} else {
+			time.Sleep(interval)
+		}
+	}
 
 	err = Book(bookingDetails, dryRun, logger)
 
