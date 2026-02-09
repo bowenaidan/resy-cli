@@ -68,6 +68,7 @@ type BookingConfig struct {
 }
 
 var ErrNoMatchingSlots = errors.New("no matching slots")
+var ErrNoSlotsForDate = errors.New("no slots for date")
 
 func ToBookCmd(bookingDetails *BookingDetails, dryRun bool) string {
 	resTypes := make([]string, 0)
@@ -144,7 +145,7 @@ func WaitThenBook(bookingDetails *BookingDetails, dryRun bool, logger zerolog.Lo
 		if err == nil {
 			return nil
 		}
-		if err != ErrNoMatchingSlots {
+		if err != ErrNoMatchingSlots && err != ErrNoSlotsForDate {
 			return err
 		}
 		remaining := time.Until(*bookTime)
